@@ -36,7 +36,9 @@ list_results() {
       read userInput
       if [ "$userInput" = "y" ]; then
         echo 'Downloading...'
-        fetch_album $(echo "$result" | jq .collectionId)
+        fetch_album $(echo "$result" | jq .collectionId) \
+          "$(echo "$artistName" | jq -r .)" \
+          "$(echo "$albumName" | jq -r .)"
       fi
     fi
   done
@@ -50,21 +52,21 @@ youtube_results() {
 }
 
 fetch_album() {
+  local artistName="$2"
+  local albumName="$3"
   local response=$(curl -s https://itunes.apple.com/lookup?id=$1\&entity=song)
   local resultCount=$(echo "$response" | jq .resultCount)
   for i in $(seq 0 $((resultCount-1)))
   do
     local result=$(echo "$response" | jq .results | jq .[$i])
     local songName=$(echo "$result" | jq -r .trackName)
-    local artistName=$(echo "$result" | jq -r .artistName)
-    local albumName=$(echo "$result" | jq -r .albumName)
     local trackNumber=$(echo "$result" | jq -r .trackNumber)
     if [ "$songName" = null ]; then
       continue
     fi
     local ids=$(youtube_results "$songName by $artistName")
     local firstId=$(echo "$ids" | head -n 1)
-    fetch_video "$firstId" "$songName" "$albumName" "$trackNumber"
+    fetch_video "$firstId" "$songName" "$artistName" "$albumName" "$trackNumber"
   done
 }
 
@@ -73,8 +75,9 @@ fetch_video() {
   youtube-dl https://youtube.com/watch?v=$1 \
     --extract-audio --audio-format mp3 \
     --output "$2.%(ext)s"
-  id3v2 --track "$4" "$filename"
   id3v2 --artist "$3" "$filename"
+  id3v2 --album "$4" "$filename"
+  id3v2 --track "$5" "$filename"
 }
 
 list_results "$1"

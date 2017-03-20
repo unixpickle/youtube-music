@@ -1,0 +1,80 @@
+#!/bin/bash
+
+if [ "$#" -ne 1 ]; then
+  echo 'Usage: youtube-music <search term>' >&2
+  echo '' >&2
+  echo 'Files are saved to the current directory.' >&2
+  exit 1
+fi
+
+urlescape() {
+  xxd -ps | tr $'\n' ' ' | sed -E 's/ //g' | sed -E 's/([0-9a-f][0-9a-f])/%\1/g'
+}
+
+list_results() {
+  local escTerm=$(echo "$1" | urlescape)
+  local response=$(curl -s https://itunes.apple.com/search?term=$escTerm\&limit=200)
+  local resultCount=$(echo "$response" | jq .resultCount)
+
+  local seen=""
+  for i in $(seq 0 $((resultCount-1)))
+  do
+    local result=$(echo "$response" | jq .results | jq .[$i])
+    local albumName=$(echo "$result" | jq .collectionName)
+    local artistName=$(echo "$result" | jq .artistName)
+    local collectionId=$(echo "$result" | jq .collectionId)
+    local hasSeen=0
+    for item in $seen
+    do
+      if [ $item = $collectionId ]; then
+        local hasSeen=1
+      fi
+    done
+    if [ $hasSeen -eq 0 ]; then
+      local seen="$seen $collectionId"
+      echo -n "Download $albumName by $artistName? [y/n]: "
+      read userInput
+      if [ "$userInput" = "y" ]; then
+        echo 'Downloading...'
+        fetch_album $(echo "$result" | jq .collectionId)
+      fi
+    fi
+  done
+}
+
+youtube_results() {
+  local escQuery=$(echo "$1" | urlescape)
+  curl -s https://www.youtube.com/results?search_query=$escQuery |
+    sed -E $'s/href/\\\n/g' | grep '/watch?' |
+    sed -E 's/(^="\/watch\?v=|&amp;.*|" .*)//g'
+}
+
+fetch_album() {
+  local response=$(curl -s https://itunes.apple.com/lookup?id=$1\&entity=song)
+  local resultCount=$(echo "$response" | jq .resultCount)
+  for i in $(seq 0 $((resultCount-1)))
+  do
+    local result=$(echo "$response" | jq .results | jq .[$i])
+    local songName=$(echo "$result" | jq -r .trackName)
+    local artistName=$(echo "$result" | jq -r .artistName)
+    local albumName=$(echo "$result" | jq -r .albumName)
+    local trackNumber=$(echo "$result" | jq -r .trackNumber)
+    if [ "$songName" = null ]; then
+      continue
+    fi
+    local ids=$(youtube_results "$songName by $artistName")
+    local firstId=$(echo "$ids" | head -n 1)
+    fetch_video "$firstId" "$songName" "$albumName" "$trackNumber"
+  done
+}
+
+fetch_video() {
+  local filename="$2.mp3"
+  youtube-dl https://youtube.com/watch?v=$1 \
+    --extract-audio --audio-format mp3 \
+    --output "$2.%(ext)s"
+  id3v2 --track "$4" "$filename"
+  id3v2 --artist "$3" "$filename"
+}
+
+list_results "$1"

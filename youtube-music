@@ -72,8 +72,9 @@ fetch_album() {
 
 fetch_video() {
   local filename="$2.mp3"
+  echo "Fetching $filename ..."
   youtube-dl https://youtube.com/watch?v=$1 \
-    --extract-audio --audio-format mp3 \
+    --quiet --extract-audio --audio-format mp3 \
     --output "$2.%(ext)s"
   id3v2 --artist "$3" "$filename"
   id3v2 --album "$4" "$filename"

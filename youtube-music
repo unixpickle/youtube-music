@@ -1,19 +1,26 @@
 #!/bin/bash
 
-if [ "$#" -ne 1 ]; then
-  echo 'Usage: youtube-music <search term>' >&2
+if [ "$#" -ne 2 ]; then
+  echo 'Usage: youtube-music <search term> <out dir>' >&2
   echo '' >&2
   echo 'Files are saved to the current directory.' >&2
   exit 1
 fi
 
-urlescape() {
-  xxd -ps | tr $'\n' ' ' | sed -E 's/ //g' | sed -E 's/([0-9a-f][0-9a-f])/%\1/g'
-}
+QUERY="$1"
+OUT_DIR="$2"
 
-list_results() {
-  local escTerm=$(echo "$1" | urlescape)
-  local response=$(curl -s https://itunes.apple.com/search?term=$escTerm\&limit=200)
+if [ ! -d "$OUT_DIR" ]; then
+  echo 'not a directory:' "$OUT_DIR" >&2
+  exit 1
+fi
+
+ITUNES_SEARCH="https://itunes.apple.com/search?limit=200&term="
+ITUNES_LOOKUP="https://itunes.apple.com/lookup?entity=song&id="
+YOUTUBE_SEARCH="https://www.youtube.com/results?search_query="
+
+search_and_prompt() {
+  local response=$(curl -s $ITUNES_SEARCH$(urlescape "$QUERY"))
   local resultCount=$(echo "$response" | jq .resultCount)
 
   local seen=""
@@ -44,17 +51,10 @@ list_results() {
   done
 }
 
-youtube_results() {
-  local escQuery=$(echo "$1" | urlescape)
-  curl -s https://www.youtube.com/results?search_query=$escQuery |
-    sed -E $'s/href/\\\n/g' | grep '/watch?' |
-    sed -E 's/(^="\/watch\?v=|&amp;.*|" .*)//g'
-}
-
 fetch_album() {
   local artistName="$2"
   local albumName="$3"
-  local response=$(curl -s https://itunes.apple.com/lookup?id=$1\&entity=song)
+  local response=$(curl -s $ITUNES_LOOKUP$1)
   local resultCount=$(echo "$response" | jq .resultCount)
   for i in $(seq 0 $((resultCount-1)))
   do
@@ -64,16 +64,16 @@ fetch_album() {
     if [ "$songName" = null ]; then
       continue
     fi
-    local ids=$(youtube_results "$songName by $artistName")
-    local firstId=$(echo "$ids" | head -n 1)
-    fetch_video "$firstId" "$songName" "$artistName" "$albumName" "$trackNumber"
+    local vidId=$(youtube_search "$songName by $artistName")
+    fetch_song "$vidId" "$songName" "$artistName" "$albumName" "$trackNumber"
   done
 }
 
-fetch_video() {
+fetch_song() {
   local cleanName=$(echo "$2" | tr '/' ':')
   local filename="$cleanName.mp3"
   echo "Fetching $filename ..."
+  cd $OUT_DIR
   youtube-dl https://youtube.com/watch?v=$1 \
     --quiet --extract-audio --audio-format mp3 \
     --output "$cleanName.%(ext)s"
@@ -81,6 +81,19 @@ fetch_video() {
   id3v2 --artist "$3" "$filename"
   id3v2 --album "$4" "$filename"
   id3v2 --track "$5" "$filename"
+  cd - >/dev/null
 }
 
-list_results "$1"
+youtube_search() {
+  curl -s $YOUTUBE_SEARCH$(urlescape "$1") |
+    sed -E $'s/href/\\\n/g' | grep '/watch?' |
+    sed -E 's/(^="\/watch\?v=|&amp;.*|" .*)//g' |
+    head -n 1
+}
+
+urlescape() {
+  echo "$1" | xxd -ps | tr $'\n' ' ' | sed -E 's/ //g' |
+    sed -E 's/([0-9a-f][0-9a-f])/%\1/g'
+}
+
+search_and_prompt
